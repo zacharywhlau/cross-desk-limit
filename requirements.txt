@@ -1,0 +1,6 @@
+# Runtime dependencies. Everything else is the standard library.
+pandas>=2.0        # data boundary only: src/cdl/treats/tabular.py and the prototype
+openpyxl>=3.1      # only for the Excel FFR path and reading .xlsx from dev_cache
+
+# Development only (not needed to run the tool):
+#   pytest>=8.0
