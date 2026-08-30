@@ -1,0 +1,4 @@
+{
+  "name": "cross-desk-limit",
+  "install": "bash .cursor/install.sh"
+}
