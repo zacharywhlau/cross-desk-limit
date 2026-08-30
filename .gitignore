@@ -216,3 +216,16 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- cross-desk-limit -------------------------------------------------------
+# Local, environment specific, or desk data. Never commit any of this.
+config.ini
+dev_cache/
+logs/
+report.html
+prototype_report.txt
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+dist/
