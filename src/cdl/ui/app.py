@@ -45,9 +45,7 @@ class LimitCheckApp(ttk.Frame):
         self.logged_in_user: str | None = None
         self.last_result: CheckResult | None = None
 
-        self.grid(sticky="nsew")
-        master.columnconfigure(0, weight=1)
-        master.rowconfigure(0, weight=1)
+        # Placement is the caller's job (build_window puts this frame on a canvas).
         self.columnconfigure(0, weight=1)
 
         row = 0
@@ -141,7 +139,7 @@ class LimitCheckApp(ttk.Frame):
             frame,
             ("counterparty", "parent", "limit", "utilisation", "holds", "available", "agreement"),
             height=4,
-            widths={"agreement": 520},
+            widths={"counterparty": 170, "agreement": 460},
         )
         self.chain_table.grid(row=0, column=0, sticky="ew")
         return row + 1
@@ -380,14 +378,45 @@ class LimitCheckApp(ttk.Frame):
         self.release_button.configure(state="normal" if own_row else "disabled")
 
 
+def _scrollable_host(root: tk.Tk) -> tk.Canvas:
+    """A canvas the seven sections live in, so a short screen can still reach them."""
+    canvas = tk.Canvas(root, highlightthickness=0)
+    scrollbar = ttk.Scrollbar(root, orient="vertical", command=canvas.yview)
+    canvas.configure(yscrollcommand=scrollbar.set)
+    canvas.grid(row=0, column=0, sticky="nsew")
+    scrollbar.grid(row=0, column=1, sticky="ns")
+    root.columnconfigure(0, weight=1)
+    root.rowconfigure(0, weight=1)
+    return canvas
+
+
 def build_window(settings: Settings | None = None) -> tk.Tk:
     """Create the window without entering the event loop (used by the smoke test)."""
     settings = settings or load_settings()
     store = HoldsStore(settings)
     root = tk.Tk()
     root.title(WINDOW_TITLE)
-    root.minsize(1080, 900)
-    LimitCheckApp(root, settings, store)
+    root.minsize(900, 600)
+    root.geometry("1180x1000")
+
+    canvas = _scrollable_host(root)
+    app = LimitCheckApp(canvas, settings, store)
+    window = canvas.create_window((0, 0), window=app, anchor="nw")
+
+    def on_content_resize(_event: tk.Event) -> None:
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    def on_canvas_resize(event: tk.Event) -> None:
+        canvas.itemconfigure(window, width=event.width)
+
+    def on_wheel(event: tk.Event) -> None:
+        canvas.yview_scroll(-1 if event.num == 4 or event.delta > 0 else 1, "units")
+
+    app.bind("<Configure>", on_content_resize)
+    canvas.bind("<Configure>", on_canvas_resize)
+    for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+        canvas.bind_all(sequence, on_wheel)
+    root.cdl_app = app  # type: ignore[attr-defined]  # handy for the smoke test
     return root
 
 
