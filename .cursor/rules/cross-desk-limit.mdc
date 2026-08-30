@@ -1,0 +1,37 @@
+---
+description: cross-desk-limit project rules
+alwaysApply: true
+---
+
+# cross-desk-limit — always read the source of truth first
+
+Before changing anything in this project, read:
+
+1. `REQUIREMENTS.md` — sections §1 through §12 of the operator's brief, verbatim.
+2. `docs/PLAN.md` — the complete brief, verbatim, including the milestones (§17),
+   the unconfirmed items (§20), what is out of scope (§21), the test list (§22) and
+   the acceptance checks (§23).
+
+Those two files are the only source of truth. Do not clone, read or depend on any
+other repository.
+
+## Rules that always apply
+
+- Rules and values marked **PROVISIONAL** are not confirmed by the owning team and
+  may change. A provisional rule stays as one small function or one constant the
+  operator can edit — do not build abstraction layers around it "just in case".
+- Confidentiality: never write the employer's name, an internal hostname, URL,
+  library/schema name, credential, or a real counterparty or limit value into any
+  file, commit message or log line. Use `<LIBRARY>`, `<URL>`, `ABCD` / `ABCDEFG`
+  style placeholders. Environment-specific values live in gitignored config.
+- `pandas` may be imported only inside `src/cdl/treats/` and in
+  `prototype/check_limit.py`.
+- `prototype/check_limit.py` imports nothing from `src/`; it must stay readable
+  top to bottom.
+- Dependency direction: `ui` and `cli` may import `logic` and `store`; `logic` may
+  import `treats` and `constants`; nothing imports `ui`.
+- Forbidden anywhere: FastAPI, Streamlit, SQLAlchemy, pydantic, any HTTP server,
+  any background scheduler.
+- Type-annotate public functions. English UI only.
+- Keep the parity between the standalone prototype and the package: the parity
+  test in §22 must stay green.
