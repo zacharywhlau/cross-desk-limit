@@ -16,15 +16,31 @@ from conftest import EXHAUSTED_COUNTERPARTY, REFERENCE_REQUEST
 def test_reference_case_is_a_yes(settings: Settings) -> None:
     result = run_check(REFERENCE_REQUEST, settings)
     assert result.decision == constants.DECISION_YES
-    assert result.affected_bucket == "Spot-1M"
+    assert result.affected_bucket == "SPT-1M"
     assert result.usage == pytest.approx(509_000.0)
     assert result.ffr is not None
     assert result.ffr.currency_class == "Low"
     assert result.ffr.table_name == "FFR_FX_LOW"
     assert result.deal_available_before == pytest.approx(16_500_000)
     assert result.deal_available_after == pytest.approx(15_991_000)
-    assert result.bucket_available_before == pytest.approx(6_800_000)
+    assert result.bucket_available_before == pytest.approx(16_500_000)
+    assert result.bucket_available_after == pytest.approx(15_991_000)
     assert result.sources[constants.TABLE_LIMITS] == constants.SOURCE_MOCK
+
+
+def test_a_long_dated_deal_is_rejected_when_the_period_has_no_limit(
+    settings: Settings
+) -> None:
+    """The mock FX counterparty has no limit beyond five years, as on the desk screen."""
+    request = validate_request(
+        username="edmund", counterparty="ABCDEFG", product="FX", tenor="10 years",
+        pair_or_currency="USDHKD", direction="buy", notional_usd=100_000,
+    )
+    result = run_check(request, settings)
+    assert result.decision == constants.DECISION_NO
+    assert result.affected_bucket == "7Y-10Y"
+    assert result.bucket_available_before == 0.0
+    assert "period 7Y-10Y" in result.message
 
 
 def test_chain_is_reference_only(settings: Settings) -> None:

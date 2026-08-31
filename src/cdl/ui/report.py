@@ -73,15 +73,18 @@ def text_report(
         lines.append(f"  available before  : {numbers.millions(result.deal_available_before)}")
         lines.append(f"  this request usage: {numbers.millions(result.usage)}")
         lines.append(f"  available after   : {numbers.millions(result.deal_available_after)}")
-        lines.append("  buckets:")
-        header = f"    {'bucket':<8} {'limit':>12} {'occupied':>12} {'holds':>12} {'available':>12}"
-        lines.append(header)
+        lines.append("  time periods (the limit ladder: a deal consumes every shorter period):")
+        lines.append(
+            f"    {'period':<9} {'limit':>12} {'cash risk':>12} {'holds':>12} "
+            f"{'risk >= here':>13} {'available':>12}"
+        )
         for bucket in surface.buckets:
             marker = " <- this deal" if bucket.bucket == result.affected_bucket else ""
             lines.append(
-                f"    {bucket.bucket:<8} {numbers.millions(bucket.limit):>12} "
+                f"    {bucket.bucket:<9} {numbers.millions(bucket.limit):>12} "
                 f"{numbers.millions(bucket.occupied):>12} "
                 f"{numbers.millions(bucket.holds_usage):>12} "
+                f"{numbers.millions(bucket.reverse_cumulative):>13} "
                 f"{numbers.millions(bucket.available):>12}{marker}"
             )
 
@@ -158,6 +161,7 @@ def html_report(
                 numbers.millions(bucket.limit),
                 numbers.millions(bucket.occupied),
                 numbers.millions(bucket.holds_usage),
+                numbers.millions(bucket.reverse_cumulative),
                 numbers.millions(bucket.available),
             )
             for bucket in (surface.buckets if surface else ())
@@ -270,9 +274,11 @@ not a booking.</p>
   <dt>available after</dt><dd>{numbers.millions(result.deal_available_after)}</dd>
 </dl>
 
-<h2>Tenor buckets</h2>
+<h2>Time periods <span class="note">(the limit ladder: a deal consumes every shorter
+period, so available is the running minimum)</span></h2>
 <table>
-<tr><th>bucket</th><th>limit</th><th>occupied</th><th>holds</th><th>available</th></tr>
+<tr><th>period</th><th>limit</th><th>cash risk</th><th>holds</th>
+<th>risk from here on</th><th>available</th></tr>
 {bucket_rows}
 </table>
 

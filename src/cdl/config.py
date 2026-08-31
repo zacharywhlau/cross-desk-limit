@@ -37,6 +37,12 @@ DEFAULTS: dict[str, dict[str, str]] = {
         "ttcpipp": constants.SOURCE_MOCK,
         "cksblmp": constants.SOURCE_MOCK,
         "ckovlmp": constants.SOURCE_MOCK,
+        # The endpoint caps a result set. A read that comes back with exactly this many
+        # rows is treated as truncated rather than complete (see treats/api.py).
+        "max_rows": "20000",
+        # A counterparty `doctor` may query to prove a table answers, instead of
+        # reading the whole table. Local value: it never belongs in the repository.
+        "probe_counterparty": "",
     },
     "ffr": {
         "source": constants.SOURCE_MOCK,
@@ -67,6 +73,8 @@ class TreatsSettings:
     ttcpipp: str
     cksblmp: str
     ckovlmp: str
+    max_rows: int = 0
+    probe_counterparty: str = ""
 
     def source_for(self, table: str) -> str:
         key = constants.TABLE_CONFIG_KEY.get(table)
@@ -109,6 +117,9 @@ class Settings:
     paths: PathsSettings
     config_path: Path | None = None
     overrides: tuple[str, ...] = field(default_factory=tuple)
+    #: Values that arrived wrapped in quotes; the quotes were stripped, and `doctor`
+    #: reports them so the ini file gets cleaned up.
+    quoted_values: tuple[str, ...] = field(default_factory=tuple)
 
     def source_summary(self) -> dict[str, str]:
         """Effective source per table, for the startup log and `doctor`."""
@@ -142,8 +153,26 @@ def _env_key(section: str, key: str) -> str:
     return f"{ENV_PREFIX}_{section.upper()}_{key.upper()}"
 
 
+def unquote(raw: str) -> str:
+    """Strip one matching pair of surrounding quotes, then whitespace.
+
+    An ini file is not Python: `url = "http://..."` would otherwise keep its quotes and
+    the endpoint call would fail with a value that looks correct in the file. Quotes
+    around a value are always a mistake here, so they are removed rather than reported.
+    """
+    text = str(raw if raw is not None else "").strip()
+    while len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
+        text = text[1:-1].strip()
+    return text
+
+
+def looks_quoted(raw: str) -> bool:
+    """True when a raw config value still carries a quote character."""
+    return any(quote in str(raw or "") for quote in ("'", '"'))
+
+
 def _resolve_path(raw: str) -> Path:
-    path = Path(str(raw).strip()).expanduser()
+    path = Path(unquote(raw)).expanduser()
     if path.is_absolute() or str(path).startswith("\\\\"):
         return path
     return (project_root() / path).resolve()
@@ -151,7 +180,7 @@ def _resolve_path(raw: str) -> Path:
 
 def _positive_int(section: str, key: str, raw: str) -> int:
     try:
-        value = int(str(raw).strip())
+        value = int(unquote(raw))
     except (TypeError, ValueError) as error:
         raise ConfigError(f"[{section}] {key} must be a whole number, got {raw!r}") from error
     if value <= 0:
@@ -160,7 +189,7 @@ def _positive_int(section: str, key: str, raw: str) -> int:
 
 
 def _choice(section: str, key: str, raw: str, allowed: tuple[str, ...]) -> str:
-    value = str(raw).strip().lower()
+    value = unquote(raw).lower()
     if value not in allowed:
         raise ConfigError(
             f"[{section}] {key} must be one of {', '.join(allowed)}; got {raw!r}"
@@ -184,21 +213,30 @@ def load_settings(config_path: str | os.PathLike[str] | None = None) -> Settings
                 parser.set(section, key, os.environ[env_name])
                 overrides.append(env_name)
 
+    quoted = tuple(
+        f"[{section}] {key}"
+        for section, keys in DEFAULTS.items()
+        for key in keys
+        if looks_quoted(parser.get(section, key))
+    )
+
     treats = TreatsSettings(
-        url=parser.get("treats", "url").strip(),
-        library=parser.get("treats", "library").strip(),
+        url=unquote(parser.get("treats", "url")),
+        library=unquote(parser.get("treats", "library")),
         ttcpipp=_choice("treats", "ttcpipp", parser.get("treats", "ttcpipp"),
                         constants.TABLE_SOURCES),
         cksblmp=_choice("treats", "cksblmp", parser.get("treats", "cksblmp"),
                         constants.TABLE_SOURCES),
         ckovlmp=_choice("treats", "ckovlmp", parser.get("treats", "ckovlmp"),
                         constants.TABLE_SOURCES),
+        max_rows=_positive_int("treats", "max_rows", parser.get("treats", "max_rows")),
+        probe_counterparty=unquote(parser.get("treats", "probe_counterparty")).upper(),
     )
     ffr = FfrSettings(
         source=_choice("ffr", "source", parser.get("ffr", "source"), constants.FFR_SOURCES),
-        table=parser.get("ffr", "table").strip() or constants.TABLE_FFR_DEFAULT,
-        weight_column=parser.get("ffr", "weight_column").strip(),
-        excel_path=parser.get("ffr", "excel_path").strip(),
+        table=unquote(parser.get("ffr", "table")) or constants.TABLE_FFR_DEFAULT,
+        weight_column=unquote(parser.get("ffr", "weight_column")),
+        excel_path=unquote(parser.get("ffr", "excel_path")),
     )
     if not ffr.weight_column:
         raise ConfigError("[ffr] weight_column must name a quarter column, e.g. 2025Q2")
@@ -222,4 +260,5 @@ def load_settings(config_path: str | os.PathLike[str] | None = None) -> Settings
         paths=paths,
         config_path=path,
         overrides=tuple(overrides),
+        quoted_values=quoted,
     )

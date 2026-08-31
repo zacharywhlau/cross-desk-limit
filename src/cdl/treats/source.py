@@ -20,6 +20,7 @@ from .tabular import Record
 _logger = get_logger("treats.source")
 
 _SIMPLE_PREDICATE = re.compile(r"^\s*(\w+)\s*=\s*'([^']*)'\s*$")
+_IN_PREDICATE = re.compile(r"^\s*(\w+)\s+IN\s*\((.*)\)\s*$", re.IGNORECASE)
 
 
 class SourceError(RuntimeError):
@@ -50,12 +51,24 @@ def effective_source(table: str, settings: Settings) -> str:
 
 
 def apply_where(rows: list[Record], where: str) -> list[Record]:
-    """Apply the simple ``COLUMN='VALUE'`` predicate locally (mock and cache)."""
+    """Apply the predicates this tool builds locally (mock and cache).
+
+    Only the two shapes `sql.equals_clause` and `sql.in_clause` produce are understood;
+    anything else is left alone, because mock rows are small enough not to matter.
+    """
     match = _SIMPLE_PREDICATE.match(where)
-    if not match:
-        return rows
-    column, wanted = match.group(1), match.group(2).strip().upper()
-    return [row for row in rows if str(row.get(column, "") or "").strip().upper() == wanted]
+    if match:
+        column, wanted = match.group(1), constants.code_key(match.group(2))
+        return [row for row in rows if constants.code_key(row.get(column, "")) == wanted]
+    match = _IN_PREDICATE.match(where)
+    if match:
+        column = match.group(1)
+        wanted_set = {
+            constants.code_key(item.strip().strip("'"))
+            for item in match.group(2).split(",")
+        }
+        return [row for row in rows if constants.code_key(row.get(column, "")) in wanted_set]
+    return rows
 
 
 def fetch_table(
@@ -64,8 +77,13 @@ def fetch_table(
     where: str | None = None,
     *,
     source: str | None = None,
+    end_row: int | None = None,
 ) -> TableFetch:
-    """Read one table from its configured source. Raises SourceError on failure."""
+    """Read one table from its configured source. Raises SourceError on failure.
+
+    `end_row` bounds the read for commands that only need a sample (`doctor`,
+    `extract`); a decision never uses it, because a bounded read is a partial read.
+    """
     mode = source or effective_source(table, settings)
     started = time.monotonic()
     try:
@@ -75,14 +93,18 @@ def fetch_table(
             statement = None
             if where:
                 rows = apply_where(rows, where)
+            if end_row is not None:
+                rows = rows[:end_row]
         elif mode == constants.SOURCE_CACHE:
             rows, path = cache.fetch(table, settings)
             detail = path.name
             statement = None
             if where:
                 rows = apply_where(rows, where)
+            if end_row is not None:
+                rows = rows[:end_row]
         elif mode == constants.SOURCE_API:
-            rows, statement = api.fetch(table, settings, where=where)
+            rows, statement = api.fetch(table, settings, where=where, end_row=end_row)
             detail = sql_builder.qualified_name(settings.treats.library, table)
             detail = mask_library(detail, settings.treats.library)
         else:

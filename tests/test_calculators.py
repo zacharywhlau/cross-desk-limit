@@ -61,7 +61,13 @@ def test_unknown_product_lists_the_four() -> None:
 
 
 def test_fx_limit_type_is_the_confirmed_code() -> None:
-    assert limit_type_for("FX") == "FX01"
+    assert limit_type_for("FX") == "FX 01"
     assert {limit_type_for(product) for product in constants.PRODUCTS} == {
-        "FX01", "GD01", "IR01", "EQ01"
+        "FX 01", "GD 01", "IR 01", "EQ 01"
     }
+
+
+@pytest.mark.parametrize("written", ["FX 01", "FX01", " fx 01 ", "FX  01"])
+def test_limit_type_codes_compare_without_whitespace(written: str) -> None:
+    """An export may pad the code or drop the space; the key must still match."""
+    assert constants.code_key(written) == constants.code_key(limit_type_for("FX"))

@@ -51,7 +51,96 @@ def test_extract_shows_sql_rows_and_columns(capsys: pytest.CaptureFixture[str]) 
     output = capsys.readouterr().out
     assert "SELECT * FROM <LIBRARY>.CKSBLMP" in output
     assert "rows   : 16" in output
-    assert "CFSLMT" in output
+    assert "CFSLTT" in output and "CFSO01" in output
+
+
+def test_extract_can_narrow_to_one_counterparty(
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert cli.main(["extract", "--table", "CKSBLMP", "--cpty", "ABCD"]) == 0
+    output = capsys.readouterr().out
+    assert "WHERE CFCPTY='ABCD'" in output
+    assert "rows   : 4" in output
+
+
+def test_extract_can_bound_the_row_count(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["extract", "--table", "CKSBLMP", "--limit", "2"]) == 0
+    output = capsys.readouterr().out
+    assert "bounded to the first 2 rows" in output
+    assert "rows   : 2" in output
+
+
+def test_extract_uses_the_configured_probe_counterparty(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("CDL_TREATS_PROBE_COUNTERPARTY", "EFGHIJK")
+    assert cli.main(["extract", "--table", "CKOVLMP"]) == 0
+    output = capsys.readouterr().out
+    assert "WHERE CICPTY='EFGHIJK'" in output
+    assert "rows   : 1" in output
+
+
+def test_extract_warns_when_a_cache_file_holds_only_a_sample(
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert cli.main([
+        "extract", "--table", "CKSBLMP", "--cpty", "ABCD", "--save-cache"
+    ]) == 0
+    output = capsys.readouterr().out
+    assert "filtered or bounded sample" in output
+
+
+def test_doctor_reports_quoted_config_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = tmp_path / "config.ini"
+    config.write_text(
+        "[treats]\nurl = \"http://x\"\nlibrary = MYLIB\n", encoding="utf-8")
+    monkeypatch.setenv("CDL_CONFIG", str(config))
+    cli.main(["doctor"])
+    output = capsys.readouterr().out
+    assert "config values unquoted" in output
+    assert "[treats] url" in output
+
+
+def test_doctor_probes_api_tables_with_a_bounded_query(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The endpoint caps a result set, so a probe never asks for a whole table."""
+    pd = pytest.importorskip("pandas")
+    from cdl.treats import api
+
+    monkeypatch.setenv("CDL_TREATS_TTCPIPP", "api")
+    monkeypatch.setenv("CDL_TREATS_URL", "http://placeholder")
+    monkeypatch.setenv("CDL_TREATS_LIBRARY", "PLACEHOLDER")
+    monkeypatch.setenv("CDL_TREATS_PROBE_COUNTERPARTY", "ABCDEFG")
+    payloads: list[dict[str, object]] = []
+
+    def connector(url, payload):  # noqa: ANN001, ANN202
+        payloads.append(payload)
+        return pd.DataFrame([{"XJCPAC": "ABCDEFG", "XJPRAC": "ABCDGRP"}])
+
+    monkeypatch.setattr(api, "query_to_dataframe", connector)
+    cli.main(["doctor"])
+    output = capsys.readouterr().out
+
+    assert "[PASS] query TTCPIPP" in output
+    assert "one counterparty" in output
+    assert payloads, "the connector was never called"
+    assert payloads[0]["endRow"] == cli.DOCTOR_PROBE_ROWS
+    assert "WHERE XJCPAC='ABCDEFG'" in str(payloads[0]["fullSQL"])
+
+
+def test_doctor_warns_when_no_probe_counterparty_is_configured(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("CDL_TREATS_TTCPIPP", "api")
+    monkeypatch.setenv("CDL_TREATS_URL", "http://placeholder")
+    monkeypatch.setenv("CDL_TREATS_LIBRARY", "PLACEHOLDER")
+    cli.main(["doctor"])
+    output = capsys.readouterr().out
+    assert "probe counterparty set" in output
+    assert "row sample" in output
 
 
 def test_extract_save_cache_writes_the_gitignored_folder(
@@ -78,7 +167,7 @@ def test_check_writes_report_html(
     assert "509,000" in output
     assert report.is_file()
     html = report.read_text(encoding="utf-8")
-    assert "Spot-1M" in html and "ABCDGRP" in html and "reference only" in html
+    assert "SPT-1M" in html and "ABCDGRP" in html and "reference only" in html
 
 
 def test_check_no_hold_leaves_no_claim(capsys: pytest.CaptureFixture[str]) -> None:

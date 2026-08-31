@@ -117,6 +117,6 @@ def test_parity_on_the_reference_case(tmp_path: Path, settings: Settings) -> Non
     ])
     package = run_check(REFERENCE_REQUEST, settings)
     assert prototype["decision"] == package.decision == "Y"
-    assert prototype["bucket"] == package.affected_bucket == "Spot-1M"
+    assert prototype["bucket"] == package.affected_bucket == "SPT-1M"
     assert float(prototype["usage"]) == pytest.approx(509_000.0)
     assert package.usage == pytest.approx(509_000.0)

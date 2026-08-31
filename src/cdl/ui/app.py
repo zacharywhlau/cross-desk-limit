@@ -125,7 +125,11 @@ class LimitCheckApp(ttk.Frame):
         self.deal_label = ttk.Label(frame, text="deal limit: -", justify="left")
         self.deal_label.grid(row=0, column=0, columnspan=2, sticky="w")
         self.bucket_table = self._make_table(
-            frame, ("bucket", "limit", "occupied", "holds", "available"), height=5)
+            frame,
+            ("period", "limit", "cash risk", "holds", "risk from here", "available"),
+            height=len(constants.BUCKETS),
+            widths={"period": 90},
+        )
         self.bucket_table.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 0))
         return row + 1
 
@@ -295,12 +299,14 @@ class LimitCheckApp(ttk.Frame):
             self._fill(self.bucket_table, [])
         else:
             self.deal_label.configure(text=(
-                f"deal limit {numbers.millions(surface.deal_limit)}  "
-                f"utilisation {numbers.millions(surface.utilisation)}  "
+                f"total limit {numbers.millions(surface.deal_limit)}  "
+                f"total cash risk {numbers.millions(surface.utilisation)}  "
                 f"holds {numbers.millions(surface.holds_usage)}  "
-                f"available before {numbers.millions(result.deal_available_before)}  "
+                f"total available {numbers.millions(result.deal_available_before)}\n"
+                f"period {result.affected_bucket or '-'}: available before "
+                f"{numbers.millions(result.bucket_available_before)}  "
                 f"this usage {numbers.millions(result.usage)}  "
-                f"available after {numbers.millions(result.deal_available_after)}"
+                f"available after {numbers.millions(result.bucket_available_after)}"
             ))
             self._fill(self.bucket_table, [
                 (
@@ -308,6 +314,7 @@ class LimitCheckApp(ttk.Frame):
                     numbers.millions(bucket.limit),
                     numbers.millions(bucket.occupied),
                     numbers.millions(bucket.holds_usage),
+                    numbers.millions(bucket.reverse_cumulative),
                     numbers.millions(bucket.available),
                 )
                 for bucket in surface.buckets

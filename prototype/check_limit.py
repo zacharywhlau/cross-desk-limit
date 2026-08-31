@@ -67,16 +67,16 @@ REPORT_PATH = "prototype_report.txt"
 # PROVISIONAL: names marked below are not yet confirmed by the owning team.
 COL_CPTY_ACRONYM = "XJCPAC"
 COL_CPTY_PARENT = "XJPRAC"
-COL_LIMIT_CPTY = "CFCPAC"  # PROVISIONAL
-COL_LIMIT_TYPE = "CFSLTT"
-COL_LIMIT_AMOUNT = "CFSLMT"
-COL_OCCUPIED_PREFIX = "CFS00"  # PROVISIONAL: 01 is the first tenor bucket
-COL_BUCKET_LIMIT_PREFIX = "CFSL00"  # PROVISIONAL: per-bucket limits may not exist
-COL_AGREEMENT_CPTY = "CICPAC"  # PROVISIONAL
+COL_LIMIT_CPTY = "CFCPTY"
+COL_LIMIT_TYPE = "CFSLMT"  # limit type code, e.g. "FX 01"
+COL_LIMIT_AMOUNT = "CFSLTT"  # total (deal level) approved limit
+COL_AGREEMENT_CPTY = "CICPTY"
 COL_AGREEMENT_TEXT = "CIRFMG"
 
-# PROVISIONAL: only FX01 is confirmed.
-LIMIT_TYPE_BY_PRODUCT = {"FX": "FX01", "Gold": "GD01", "IRS": "IR01", "Equity swaps": "EQ01"}
+# PROVISIONAL: only "FX 01" is confirmed.
+LIMIT_TYPE_BY_PRODUCT = {
+    "FX": "FX 01", "Gold": "GD 01", "IRS": "IR 01", "Equity swaps": "EQ 01",
+}
 
 # PROVISIONAL sample lists; the official mapping is still to be supplied.
 CURRENCY_CLASS = {
@@ -97,7 +97,21 @@ FFR_MOCK_FILE = {
     ("Equity swaps", None): "FFR_EQ_SWAP",
 }
 
-BUCKETS = ["Spot-1M", "1M-3M", "3M-6M", "6M-1Y", "1Y+"]
+# The 14 time periods of the limit system, shortest first. Period n is held in
+# CFSO{n:02d} (cash risk already outstanding) and CFSL{n:02d} (approved limit).
+BUCKETS = [
+    "CALL", "TDY", "TOM", "SPT", "SPT-1M", "1M-3M", "3M-6M", "6M-1Y",
+    "1Y-3Y", "3Y-5Y", "5Y-7Y", "7Y-10Y", "10Y-15Y", "15Y+",
+]
+
+# PROVISIONAL upper bound in months per period. CALL, TDY and TOM have no bound: no
+# tenor on the FFR grid maps onto them, so a deal never lands there.
+BUCKET_UPPER_BOUND_MONTHS = [
+    ("SPT", 0.0), ("SPT-1M", 1.0), ("1M-3M", 3.0), ("3M-6M", 6.0), ("6M-1Y", 12.0),
+    ("1Y-3Y", 36.0), ("3Y-5Y", 60.0), ("5Y-7Y", 84.0), ("7Y-10Y", 120.0),
+    ("10Y-15Y", 180.0),
+]
+LONGEST_BUCKET = "15Y+"
 
 
 # ===========================================================================
@@ -171,13 +185,29 @@ def fetch(table, where=None, mode=None):
     return rows, mode, sql
 
 
+def equals_clause(column, value):
+    """COLUMN='VALUE' - build the predicate, never hand-write it."""
+    return "{0}='{1}'".format(column, str(value).strip().upper())
+
+
+def in_clause(column, values):
+    """COLUMN IN ('A','B') - one query for the whole counterparty chain."""
+    joined = ",".join("'{0}'".format(str(value).strip().upper()) for value in values)
+    return "{0} IN ({1})".format(column, joined)
+
+
 def filter_rows(rows, where):
-    """Apply the simple `COL='VALUE'` predicate used by this script to mock rows."""
+    """Apply the `COL='VALUE'` / `COL IN (...)` predicates of this script to mock rows."""
     match = re.match(r"^\s*(\w+)\s*=\s*'([^']*)'\s*$", where)
-    if not match:
-        return rows
-    column, wanted = match.group(1), match.group(2)
-    return [row for row in rows if str(row.get(column, "")).strip().upper() == wanted.upper()]
+    if match:
+        column, wanted = match.group(1), match.group(2).strip().upper()
+        return [row for row in rows if code_key(row.get(column)) == code_key(wanted)]
+    match = re.match(r"^\s*(\w+)\s+IN\s*\((.*)\)\s*$", where, re.IGNORECASE)
+    if match:
+        column = match.group(1)
+        wanted = {code_key(item.strip().strip("'")) for item in match.group(2).split(",")}
+        return [row for row in rows if code_key(row.get(column)) in wanted]
+    return rows
 
 
 def parse_percent(value):
@@ -240,21 +270,42 @@ def normalise_tenor(raw):
     )
 
 
-def bucket_for(tenor):
-    """PROVISIONAL bucket map - one function, easy to edit."""
+def months_of(tenor):
+    """Approximate maturity in months for a grid label."""
     label = normalise_tenor(tenor)
-    if label == "Spot" or label.endswith("week") or label.endswith("weeks") or label == "1 months":
-        return "Spot-1M"
-    if label.endswith("months"):
-        months = int(label.split(" ")[0])
-        if months <= 3:
-            return "1M-3M"
-        if months <= 6:
-            return "3M-6M"
-        if months <= 12:
-            return "6M-1Y"
-        return "1Y+"
-    return "1Y+"
+    if label == "Spot":
+        return 0.0
+    count, unit = label.split(" ", 1)
+    count = int(count)
+    if unit.startswith("week"):
+        return count * 7.0 / 30.0
+    if unit.startswith("month"):
+        return float(count)
+    return count * 12.0
+
+
+def bucket_for(tenor):
+    """PROVISIONAL period map - a deal falls in the first period that covers it."""
+    months = months_of(tenor)
+    for name, upper in BUCKET_UPPER_BOUND_MONTHS:
+        if months <= upper:
+            return name
+    return LONGEST_BUCKET
+
+
+def code_key(value):
+    """Comparison key for a code column: no whitespace, upper case ("FX 01" == "FX01")."""
+    return "".join(str(value if value is not None else "").split()).upper()
+
+
+def occupied_column(slot):
+    """Cash risk already outstanding in one period: CFSO01 .. CFSO14."""
+    return "CFSO{0:02d}".format(slot)
+
+
+def slot_limit_column(slot):
+    """Approved limit for one period: CFSL01 .. CFSL14."""
+    return "CFSL{0:02d}".format(slot)
 
 
 def classifying_currency(pair_or_currency):
@@ -309,26 +360,45 @@ def usage_for(product, notional_usd, ffr_weight):
 
 
 def limit_row_for(rows, counterparty, product):
-    code = LIMIT_TYPE_BY_PRODUCT[product]
+    code = code_key(LIMIT_TYPE_BY_PRODUCT[product])
     for row in rows:
-        same_cpty = str(row.get(COL_LIMIT_CPTY, "")).strip().upper() == counterparty
-        same_type = str(row.get(COL_LIMIT_TYPE, "")).strip().upper() == code
+        same_cpty = code_key(row.get(COL_LIMIT_CPTY)) == code_key(counterparty)
+        same_type = code_key(row.get(COL_LIMIT_TYPE)) == code
         if same_cpty and same_type:
             return row
     return None
 
 
 def surface_from_row(row):
-    """Deal limit, utilisation and per-bucket figures. PROVISIONAL: utilisation is
-    the sum of the occupied buckets; a bucket limit falls back to the deal limit."""
-    deal_limit = to_amount(row.get(COL_LIMIT_AMOUNT))
+    """Read one CKSBLMP row into the limit ladder.
+
+    The limit system is cumulative: a deal booked in one period also consumes every
+    shorter period, so the availability of period i is
+
+        reverse_cum[i] = sum(cash risk of period j for j >= i)
+        available[i]   = max(0, min(limit[i] - reverse_cum[i], available[i - 1]))
+
+    which is why a fully used short period blocks every longer one as well.
+    """
+    total_limit = to_amount(row.get(COL_LIMIT_AMOUNT))
     occupied = {}
-    bucket_limits = {}
-    for index, bucket in enumerate(BUCKETS, start=1):
-        occupied[bucket] = to_amount(row.get("{0}{1}".format(COL_OCCUPIED_PREFIX, index)))
-        raw = row.get("{0}{1}".format(COL_BUCKET_LIMIT_PREFIX, index))
-        bucket_limits[bucket] = to_amount(raw) if str(raw or "").strip() else deal_limit
-    return deal_limit, sum(occupied.values()), occupied, bucket_limits
+    limits = {}
+    for slot, bucket in enumerate(BUCKETS, start=1):
+        occupied[bucket] = to_amount(row.get(occupied_column(slot)))
+        raw = row.get(slot_limit_column(slot))
+        limits[bucket] = to_amount(raw) if str(raw or "").strip() else total_limit
+    reverse_cum = {}
+    total = 0.0
+    for bucket in reversed(BUCKETS):
+        total += occupied[bucket]
+        reverse_cum[bucket] = total
+    available = {}
+    running = None
+    for bucket in BUCKETS:
+        headroom = limits[bucket] - reverse_cum[bucket]
+        running = headroom if running is None else min(headroom, running)
+        available[bucket] = max(0.0, running)
+    return total_limit, sum(occupied.values()), occupied, limits, reverse_cum, available
 
 
 def validate_counterparty(raw):
@@ -388,7 +458,7 @@ def main(argv=None):
         current = cpty
         rows_first = 0
         for depth in range(10):
-            where = "{0}='{1}'".format(COL_CPTY_ACRONYM, current)
+            where = equals_clause(COL_CPTY_ACRONYM, current)
             rows, mode, sql = fetch(TABLE_COUNTERPARTY, where=where)
             if depth == 0:
                 rows_first = len(rows)
@@ -411,16 +481,21 @@ def main(argv=None):
             rows_first, parent or "(none)", " > ".join(chain)))
 
         # --- [3/6] limits and occupied amounts --------------------------------
+        # The WHERE matters: the endpoint caps a result set, so never read the whole
+        # table. One IN (...) covers the submitted counterparty and its parents.
         step = 3
         table = TABLE_LIMITS
-        limit_rows, mode, sql = fetch(TABLE_LIMITS)
+        where = in_clause(COL_LIMIT_CPTY, chain)
+        limit_rows, mode, sql = fetch(TABLE_LIMITS, where=where)
+        say("[3/6] {0}  source={1}  SQL: {2}".format(TABLE_LIMITS, mode, mask(sql)))
         row = limit_row_for(limit_rows, cpty, args.product)
         if row is None:
             raise LookupError("no {0} row for {1} with limit type {2}".format(
                 TABLE_LIMITS, cpty, LIMIT_TYPE_BY_PRODUCT[args.product]))
-        deal_limit, utilisation, occupied, bucket_limits = surface_from_row(row)
-        say("[3/6] {0}  source={1}  rows={2}  limit_type={3}  limit={4}  utilisation={5}".format(
-            TABLE_LIMITS, mode, len(limit_rows), LIMIT_TYPE_BY_PRODUCT[args.product],
+        deal_limit, utilisation, occupied, bucket_limits, reverse_cum, available = (
+            surface_from_row(row))
+        say("      rows={0}  limit_type={1}  total limit={2}  total cash risk={3}".format(
+            len(limit_rows), LIMIT_TYPE_BY_PRODUCT[args.product],
             money(deal_limit), money(utilisation)))
 
         # --- [4/6] FFR weight (mock in M1) ------------------------------------
@@ -444,40 +519,43 @@ def main(argv=None):
             money(args.notional), round(weight, 6), money(usage), bucket))
 
         # --- [6/6] decision ----------------------------------------------------
+        # The ladder already carries the "shorter periods too" rule, so the deal only
+        # has to fit the availability of its own period.
         step = 6
+        bucket_available = available[bucket]
         deal_available = deal_limit - utilisation
-        bucket_available = bucket_limits[bucket] - occupied[bucket]
-        fits_deal = usage <= deal_available
-        fits_bucket = usage <= bucket_available
-        decision = "Y" if (fits_deal and fits_bucket) else "N"
-        say("[6/6] DECISION: {0}   deal available before={1} after={2}".format(
-            decision, money(deal_available), money(deal_available - usage)))
-        say("                    bucket {0} before={1} after={2}".format(
-            bucket, money(bucket_available), money(bucket_available - usage)))
+        decision = "Y" if usage <= bucket_available else "N"
+        say("[6/6] DECISION: {0}   period {1} available before={2} after={3}".format(
+            decision, bucket, money(bucket_available), money(bucket_available - usage)))
+        say("                    period limit={0}  cash risk from {1} onwards={2}".format(
+            money(bucket_limits[bucket]), bucket, money(reverse_cum[bucket])))
+        say("                    total limit={0}  total available={1}".format(
+            money(deal_limit), money(deal_available)))
+        for name in BUCKETS:
+            marker = " <- this deal" if name == bucket else ""
+            say("      {0:<9} limit={1:>15}  cash risk>={2:>15}  available={3:>15}{4}".format(
+                name, money(bucket_limits[name]), money(reverse_cum[name]),
+                money(available[name]), marker))
         if decision == "N":
-            reasons = []
-            if not fits_deal:
-                reasons.append("the deal limit (available {0})".format(money(deal_available)))
-            if not fits_bucket:
-                reasons.append("tenor bucket {0} (available {1})".format(
-                    bucket, money(bucket_available)))
-            say("      REJECTED: usage {0} exceeds {1}".format(
-                money(usage), " and ".join(reasons)))
+            say("      REJECTED: usage {0} exceeds period {1} availability {2}".format(
+                money(usage), bucket, money(bucket_available)))
 
         # --- reference only: parent figures and agreement text -----------------
         table = TABLE_AGREEMENT
-        agreement_rows, agr_mode, sql = fetch(TABLE_AGREEMENT)
+        where = in_clause(COL_AGREEMENT_CPTY, chain)
+        agreement_rows, agr_mode, sql = fetch(TABLE_AGREEMENT, where=where)
+        say("      {0}  source={1}  SQL: {2}".format(TABLE_AGREEMENT, agr_mode, mask(sql)))
         for node in chain[1:]:
             node_row = limit_row_for(limit_rows, node, args.product)
             if node_row is None:
                 say("      parent {0} (reference only): no {1} row".format(node, TABLE_LIMITS))
                 continue
-            node_limit, node_util, _, _ = surface_from_row(node_row)
-            say("      parent {0} (reference only): limit={1}  utilisation={2}".format(
+            node_limit, node_util = surface_from_row(node_row)[:2]
+            say("      parent {0} (reference only): limit={1}  cash risk={2}".format(
                 node, money(node_limit), money(node_util)))
         for node in chain:
             for agreement in agreement_rows:
-                if str(agreement.get(COL_AGREEMENT_CPTY, "")).strip().upper() == node:
+                if code_key(agreement.get(COL_AGREEMENT_CPTY)) == code_key(node):
                     say("      agreement {0} (source={1}): {2}".format(
                         node, agr_mode, agreement.get(COL_AGREEMENT_TEXT, "")))
 
@@ -488,8 +566,10 @@ def main(argv=None):
                 "usage": round(usage, 6),
                 "bucket": bucket,
                 "ffr_weight": round(weight, 10),
-                "deal_available_before": deal_available,
+                "available_before": bucket_available,
                 "bucket_available_before": bucket_available,
+                "deal_available_before": deal_available,
+                "reverse_cumulative": reverse_cum[bucket],
             }, sort_keys=True))
         return 0
     except Exception as error:  # noqa: BLE001 - the trace is the product here

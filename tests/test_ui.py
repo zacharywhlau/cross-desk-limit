@@ -17,10 +17,13 @@ def test_report_text_and_html_contain_the_seven_section_facts(settings: Settings
     result = run_check(REFERENCE_REQUEST, settings)
     text = text_report(result)
     assert "DECISION        : Y" in text
-    assert "Breakdown" in text and "buckets:" in text
+    assert "Breakdown" in text and "time periods" in text
     assert "reference only" in text
+    # The ladder columns must be visible, not just the decision.
+    assert "risk >= here" in text and "SPT-1M" in text and "15Y+" in text
     html = html_report(result)
-    assert "Tenor buckets" in html
+    assert "Time periods" in html
+    assert "risk from here on" in html
     assert "Traders who have asked" in html
     assert "Today&#x27;s checks" in html or "Today's checks" in html
 

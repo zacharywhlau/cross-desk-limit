@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Sequence
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_$#.]*$")
 _LITERAL = re.compile(r"^[A-Za-z0-9_ .:/+-]*$")
@@ -45,11 +45,39 @@ def equals_clause(column: str, value: str) -> str:
     return f"{_identifier('column', column)}='{_literal(value)}'"
 
 
-def build_payload(library: str, table: str, statement: str) -> dict[str, Any]:
-    """The payload accepted by the company connector (no paging)."""
+def in_clause(column: str, values: Sequence[str]) -> str:
+    """``COLUMN IN ('A','B')`` - one query for a whole counterparty chain.
+
+    Callers never hand-write a predicate: the endpoint caps a result set, so every
+    real read has to be narrowed, and a hand-built string is where the mistakes live.
+    """
+    if not values:
+        raise SqlBuildError(f"an IN clause on {column} needs at least one value")
+    unique: list[str] = []
+    for value in values:
+        literal = _literal(value).upper()
+        if literal not in unique:
+            unique.append(literal)
+    joined = ",".join(f"'{literal}'" for literal in unique)
+    return f"{_identifier('column', column)} IN ({joined})"
+
+
+def build_payload(
+    library: str,
+    table: str,
+    statement: str,
+    *,
+    start_row: int | None = None,
+    end_row: int | None = None,
+) -> dict[str, Any]:
+    """The payload accepted by the company connector.
+
+    `start_row` / `end_row` stay None for a normal read (no paging). They are set when
+    a command only wants a bounded sample, such as `doctor` probing a table.
+    """
     return {
-        "startRow": None,
-        "endRow": None,
+        "startRow": start_row,
+        "endRow": end_row,
         "libandfile": [{"library": _identifier("library", library), "file":
                         _identifier("table", table)}],
         "fullSQL": statement,

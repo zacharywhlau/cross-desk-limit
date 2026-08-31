@@ -23,6 +23,7 @@ from .logic.ffr import lookup_ffr
 from .store.db import HoldsStore, StoreError
 from .treats import api, cache
 from .treats import source as source_module
+from .treats import sql as sql_builder
 from .treats.tabular import columns_of
 from .ui.report import DEFAULT_REPORT_NAME, text_report, write_html_report
 
@@ -31,9 +32,21 @@ _logger = get_logger("cli")
 EXIT_OK = 0
 EXIT_FAIL = 1
 
+#: How many rows a `doctor` probe or an unfiltered `extract` may ask the endpoint for.
+DOCTOR_PROBE_ROWS = 50
+EXTRACT_SAMPLE_ROWS = 200
+
 
 def _print(line: str = "") -> None:
     print(line)
+
+
+def _counterparty_where(table: str, counterparty: str | None) -> str | None:
+    """`COLUMN='CPTY'` for the table, or None when there is nothing to narrow by."""
+    column = constants.COUNTERPARTY_COLUMN_BY_TABLE.get(table)
+    if not column or not counterparty:
+        return None
+    return sql_builder.equals_clause(column, counterparty)
 
 
 def _settings(args: argparse.Namespace) -> Settings:
@@ -80,13 +93,27 @@ def command_doctor(args: argparse.Namespace) -> int:
             if api_tables else "not pasted, but no table is set to api"
         ),
     )
+    if settings.quoted_values:
+        warn("config values unquoted",
+             "quotes were stripped from " + ", ".join(settings.quoted_values)
+             + " - an ini file takes the value literally, so remove the quotes")
+    if api_tables and not settings.treats.probe_counterparty:
+        warn("probe counterparty set",
+             "[treats] probe_counterparty is empty, so the probes below read a "
+             f"{DOCTOR_PROBE_ROWS} row sample instead of one counterparty")
     for table in api_tables:
         if not pasted:
             check(f"query {table}", False, "skipped: connector not pasted")
             continue
+        where = _counterparty_where(table, settings.treats.probe_counterparty)
         try:
-            fetched = source_module.fetch_table(table, settings)
-            check(f"query {table}", True, f"{fetched.row_count} rows from {fetched.detail}")
+            # Bounded on purpose: the endpoint caps a result set, so a probe must never
+            # ask for a whole table.
+            fetched = source_module.fetch_table(
+                table, settings, where=where, end_row=DOCTOR_PROBE_ROWS)
+            scope = "one counterparty" if where else f"first {DOCTOR_PROBE_ROWS} rows"
+            check(f"query {table}", True,
+                  f"{fetched.row_count} rows from {fetched.detail} ({scope})")
         except Exception as error:
             check(f"query {table}", False, f"{type(error).__name__}: {error}")
     for table, mode in settings.source_summary().items():
@@ -138,9 +165,19 @@ def command_extract(args: argparse.Namespace) -> int:
             _print("    the FFR grid is not one table in this mode; "
                    "it is one file per product/class (see docs/PLAN.md §7)")
             continue
-        _print(f"    SQL: {source_module.statement_for(table, settings)}")
+        counterparty = args.cpty or settings.treats.probe_counterparty
+        where = _counterparty_where(table, counterparty)
+        # An api read is bounded unless it is narrowed to one counterparty, because the
+        # endpoint caps a result set and a capped read looks like a complete one.
+        end_row = args.limit
+        if end_row is None and mode == constants.SOURCE_API and where is None:
+            end_row = EXTRACT_SAMPLE_ROWS
+        _print(f"    SQL: {source_module.statement_for(table, settings, where)}")
+        if end_row is not None:
+            _print(f"    bounded to the first {end_row} rows")
         try:
-            fetched = source_module.fetch_table(table, settings)
+            fetched = source_module.fetch_table(
+                table, settings, where=where, end_row=end_row)
         except Exception as error:
             failures += 1
             _print(f"    FAILED: {type(error).__name__}: {error}")
@@ -155,6 +192,9 @@ def command_extract(args: argparse.Namespace) -> int:
             try:
                 path = cache.save(table, fetched.rows, settings)
                 _print(f"    cached : {path}")
+                if where is not None or end_row is not None:
+                    _print("    NOTE   : this cache file holds a filtered or bounded "
+                           "sample, not the whole table")
             except Exception as error:
                 failures += 1
                 _print(f"    cache FAILED: {type(error).__name__}: {error}")
@@ -279,6 +319,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     extract = subparsers.add_parser("extract", help="show what each source returns")
     extract.add_argument("--table", help="one table only")
+    extract.add_argument("--cpty", help="narrow the query to one counterparty "
+                                        "(default: [treats] probe_counterparty)")
+    extract.add_argument("--limit", type=int,
+                         help="ask the endpoint for at most this many rows "
+                              f"(default {EXTRACT_SAMPLE_ROWS} for an unnarrowed api read)")
     extract.add_argument("--rows", type=int, default=3, help="how many first rows to print")
     extract.add_argument("--save-cache", action="store_true",
                          help="write each table to dev_cache/<TABLE>.csv")

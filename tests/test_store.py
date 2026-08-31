@@ -40,7 +40,7 @@ def capacity_compute(capacity: float):
             decision=constants.DECISION_YES if allowed else constants.DECISION_NO,
             message="fits" if allowed else "Insufficient limit",
             usage=usage,
-            affected_bucket="Spot-1M",
+            affected_bucket="SPT-1M",
             ffr_table="FFR_FX_LOW",
             ffr_weight=0.018,
             parent_counterparty="ABCDGRP",
@@ -271,7 +271,7 @@ def test_hold_minutes_remaining_never_negative() -> None:
     hold = Hold(
         id=1, check_id=None, created_at=NOW, expires_at=NOW, released_at=None,
         status=constants.HOLD_ACTIVE, username="edmund", counterparty="ABCDEFG",
-        product="FX", tenor="1 months", affected_bucket="Spot-1M",
+        product="FX", tenor="1 months", affected_bucket="SPT-1M",
         pair_or_currency="USDHKD", notional_usd=1.0, usage=1.0,
     )
     assert hold.minutes_remaining(NOW + timedelta(hours=5)) == 0.0

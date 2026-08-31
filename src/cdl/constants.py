@@ -37,14 +37,30 @@ TABLE_CONFIG_KEY: Final[dict[str, str]] = {
 COL_CPTY_ACRONYM: Final[str] = "XJCPAC"
 COL_CPTY_PARENT: Final[str] = "XJPRAC"
 
-COL_LIMIT_COUNTERPARTY: Final[str] = "CFCPAC"  # PROVISIONAL: placeholder name
-COL_LIMIT_TYPE: Final[str] = "CFSLTT"
-COL_LIMIT_AMOUNT: Final[str] = "CFSLMT"
-COL_OCCUPIED_PREFIX: Final[str] = "CFS00"  # PROVISIONAL: 01 is the first tenor bucket
-COL_BUCKET_LIMIT_PREFIX: Final[str] = "CFSL00"  # PROVISIONAL: per-bucket limits may not exist
+COL_LIMIT_COUNTERPARTY: Final[str] = "CFCPTY"
+COL_LIMIT_TYPE: Final[str] = "CFSLMT"  # limit type code, e.g. "FX 01"
+COL_LIMIT_AMOUNT: Final[str] = "CFSLTT"  # total (deal level) approved limit
 
-COL_AGREEMENT_COUNTERPARTY: Final[str] = "CICPAC"  # PROVISIONAL: key column not confirmed
+COL_AGREEMENT_COUNTERPARTY: Final[str] = "CICPTY"
 COL_AGREEMENT_TEXT: Final[str] = "CIRFMG"
+
+
+#: The counterparty column of each table, used to narrow every real read.
+COUNTERPARTY_COLUMN_BY_TABLE: Final[dict[str, str]] = {
+    TABLE_COUNTERPARTY: COL_CPTY_ACRONYM,
+    TABLE_LIMITS: COL_LIMIT_COUNTERPARTY,
+    TABLE_AGREEMENT: COL_AGREEMENT_COUNTERPARTY,
+}
+
+
+def occupied_column(slot: int) -> str:
+    """Cash risk already outstanding in one period: CFSO01 .. CFSO14."""
+    return f"CFSO{slot:02d}"
+
+
+def slot_limit_column(slot: int) -> str:
+    """Approved limit for one period: CFSL01 .. CFSL14."""
+    return f"CFSL{slot:02d}"
 
 COL_FFR_TIME_PERIOD: Final[str] = "Time Period"
 #: PROVISIONAL: if CKBLOTP carries product / currency-class columns they are expected
@@ -81,14 +97,23 @@ PRODUCT_ALIASES: Final[dict[str, str]] = {
     "EQSWAP": PRODUCT_EQUITY_SWAP,
 }
 
-#: CFSLTT limit-type code per product.
-#: PROVISIONAL: only FX01 is confirmed; the other three are placeholders.
+#: CFSLMT limit-type code per product.
+#: PROVISIONAL: only "FX 01" is confirmed; the other three are placeholders.
 LIMIT_TYPE_BY_PRODUCT: Final[dict[str, str]] = {
-    PRODUCT_FX: "FX01",
-    PRODUCT_GOLD: "GD01",  # PROVISIONAL
-    PRODUCT_IRS: "IR01",  # PROVISIONAL
-    PRODUCT_EQUITY_SWAP: "EQ01",  # PROVISIONAL
+    PRODUCT_FX: "FX 01",
+    PRODUCT_GOLD: "GD 01",  # PROVISIONAL
+    PRODUCT_IRS: "IR 01",  # PROVISIONAL
+    PRODUCT_EQUITY_SWAP: "EQ 01",  # PROVISIONAL
 }
+
+
+def code_key(value: str) -> str:
+    """Comparison key for a code column: no whitespace, upper case.
+
+    The limit type reads "FX 01" on the desk screen, but an export may pad it or
+    drop the space, so codes are compared on this key rather than literally.
+    """
+    return "".join(str(value or "").split()).upper()
 
 DIRECTIONS: Final[tuple[str, ...]] = ("buy", "sell")
 
@@ -116,11 +141,32 @@ TENOR_ALIASES: Final[dict[str, str]] = {
     "30Y": "30 years",
 }
 
-#: PROVISIONAL bucket names and boundaries (see bucket_for in logic/tenor.py).
-BUCKETS: Final[tuple[str, ...]] = ("Spot-1M", "1M-3M", "3M-6M", "6M-1Y", "1Y+")
+#: The 14 time periods of the limit system, in ladder order (shortest first). Slot n
+#: is held in CFSO{n:02d} (cash risk) and CFSL{n:02d} (approved limit).
+BUCKETS: Final[tuple[str, ...]] = (
+    "CALL",
+    "TDY",
+    "TOM",
+    "SPT",
+    "SPT-1M",
+    "1M-3M",
+    "3M-6M",
+    "6M-1Y",
+    "1Y-3Y",
+    "3Y-5Y",
+    "5Y-7Y",
+    "7Y-10Y",
+    "10Y-15Y",
+    "15Y+",
+)
 
-#: PROVISIONAL: CFS0xx / CFSL0xx index per bucket; 01 is assumed to be the first bucket.
+#: Slot number (1..14) per period name.
 BUCKET_INDEX: Final[dict[str, int]] = {name: index for index, name in enumerate(BUCKETS, start=1)}
+
+#: PROVISIONAL: CALL, TDY and TOM are read and displayed, but no tenor on the FFR grid
+#: maps onto them (see bucket_for in logic/tenor.py). Confirm with the desk whether a
+#: trader needs to submit those three.
+UNREACHABLE_BUCKETS: Final[tuple[str, ...]] = ("CALL", "TDY", "TOM")
 
 # ---------------------------------------------------------------------------
 # FX currency classes
