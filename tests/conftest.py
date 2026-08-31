@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import replace
 from pathlib import Path
 
@@ -25,6 +26,17 @@ REFERENCE_REQUEST = CheckRequest(
 
 #: Counterparty whose mock limits are nearly exhausted, so N is easy to demonstrate.
 EXHAUSTED_COUNTERPARTY = "EFGHIJK"
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drop every CDL_* variable the operator's shell may have set.
+
+    Config values can be overridden by the environment, so a variable left over from a
+    demo or a real run would otherwise change what the tests read.
+    """
+    for name in [key for key in os.environ if key.startswith("CDL_")]:
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture(autouse=True)
