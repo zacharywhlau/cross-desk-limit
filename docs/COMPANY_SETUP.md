@@ -31,7 +31,9 @@ Open `prototype/check_limit.py`. It is one file, readable top to bottom, and imp
 nothing from `src/`.
 
 1. Fill in the **CONFIG block** at the very top: `URL`, `LIBRARY`, the four table
-   names if they differ, and `FFR_WEIGHT_COLUMN` (the quarter column to read).
+   names if they differ, and `FFR_WEIGHT_COLUMN` (the quarter column to read). This
+   block is Python, so the values **do** need quotes: `LIBRARY = "MYLIB"`. (config.ini
+   is the opposite - see the warning in step 2.)
 2. Paste the company connector at the **paste point**:
 
    ```python
@@ -39,6 +41,10 @@ nothing from `src/`.
        """PASTE THE COMPANY IMPLEMENTATION HERE."""
        raise NotImplementedError("Paste the company connector, then re-run.")
    ```
+
+   Replace the whole body, **including the `raise NotImplementedError` line** - that
+   line is what the tool looks for when it reports "connector not pasted". Keeping or
+   deleting the docstring makes no difference.
 
 3. Run it for one counterparty:
 
@@ -64,6 +70,17 @@ table, the SQL it attempted and the exception, then exits non-zero.
 
     copy config.example.ini config.ini
 
+**No quotes around a value.** `config.ini` is an ini file, not Python: everything after
+the `=` is the value, quote characters included.
+
+    url = "http://host/path"     wrong - the value contains the two quotes
+    url = http://host/path       right
+
+The tool strips quotes if you leave them and `doctor` prints a `[WARN] config values
+unquoted` line naming the keys, but the file should not have them. The CONFIG block of
+`prototype/check_limit.py` is the opposite case: that is Python, so quotes are required
+there.
+
 Then edit `config.ini`:
 
 | Section    | Key                | What to set                                              |
@@ -71,18 +88,38 @@ Then edit `config.ini`:
 | `treats`   | `url`              | the internal endpoint                                    |
 | `treats`   | `library`          | the schema/library holding the tables                    |
 | `treats`   | `ttcpipp/cksblmp/ckovlmp` | `api` once the connector is pasted                |
+| `treats`   | `max_rows`         | the endpoint's row cap (default 20000)                   |
+| `treats`   | `probe_counterparty` | a counterparty `doctor` and `extract` may query       |
 | `ffr`      | `source`           | leave `mock` until CKBLOTP is confirmed, then `api`       |
 | `ffr`      | `table`            | `CKBLOTP`                                                |
 | `ffr`      | `weight_column`    | the quarter in force, e.g. `2025Q2`                      |
 | `store`    | `db_path`          | the shared network path for the holds database           |
 
 Paste the connector into `src/cdl/treats/api.py` as well - same function, same paste
-point. That is the only file in the package that talks to the endpoint.
+point, and the same "delete the `raise NotImplementedError` line" rule. That is the
+only file in the package that talks to the endpoint.
 
 Any value can also be overridden by an environment variable, e.g.
 `CDL_STORE_DB_PATH`, `CDL_FFR_WEIGHT_COLUMN`, `CDL_TREATS_CKSBLMP`.
 
 `config.ini` is gitignored. Never commit it.
+
+### Row caps: why every query is narrowed
+
+The endpoint returns at most `[treats] max_rows` rows, so **nothing reads a whole
+table**. The tool builds the `WHERE` itself:
+
+- A check queries `TTCPIPP` per counterparty, then `CKSBLMP` and `CKOVLMP` once each
+  with `CFCPTY IN (...)` / `CICPTY IN (...)` covering the submitted counterparty and
+  its parents.
+- `doctor` probes each `api` table with `probe_counterparty` when it is set, or a 50
+  row sample when it is not.
+- `extract` takes `--cpty` and `--limit`, and bounds an unnarrowed `api` read to 200
+  rows.
+
+If a read still comes back with exactly `max_rows` rows, the tool treats it as
+truncated and reports `ERROR` instead of deciding on partial data. You should never
+need to edit a query by hand; if you do, that is a missing option and worth raising.
 
 ---
 
@@ -177,23 +214,63 @@ copies `config.example.ini` to `config.ini`, edits it, and runs `scripts\run_app
 
 ---
 
-## 7. What is still unconfirmed (§20)
+## 7. Schema: what is confirmed, and what is not
 
-These are marked `PROVISIONAL` in the code, each in one place you can edit:
+Confirmed on the corporate PC and now in the code:
+
+| Item | Value |
+|------|-------|
+| CKSBLMP counterparty column | `CFCPTY` |
+| CKSBLMP total (deal level) limit | `CFSLTT` |
+| CKSBLMP limit type code | `CFSLMT`, written `FX 01` |
+| CKSBLMP cash risk per period | `CFSO01` .. `CFSO14` |
+| CKSBLMP limit per period | `CFSL01` .. `CFSL14` |
+| CKOVLMP counterparty column | `CICPTY` |
+| The 14 periods | CALL, TDY, TOM, SPT, SPT-1M, 1M-3M, 3M-6M, 6M-1Y, 1Y-3Y, 3Y-5Y, 5Y-7Y, 7Y-10Y, 10Y-15Y, 15Y+ |
+| Availability rule | cumulative: a deal consumes its period and every shorter one (see `docs/HOW_IT_WORKS.md` §6) |
+
+Codes are compared with whitespace removed, so an export that writes `FX01` or pads the
+value still matches.
+
+Still `PROVISIONAL`, each in one place you can edit:
 
 | Item | Where |
 |------|-------|
 | CKBLOTP column layout and the product / currency-class row selection (top priority) | `resolve_ffr_selection` in `src/cdl/logic/ffr.py` |
-| CKSBLMP counterparty column name (`CFCPAC` is a placeholder) | `constants.COL_LIMIT_COUNTERPARTY` |
-| `CFS0xx` -> tenor bucket meaning, and whether per-bucket limits exist | `constants.BUCKET_INDEX`, `build_surface` in `logic/availability.py` |
-| CFSLTT codes for Gold, IRS and Equity swaps (only `FX01` is known) | `constants.LIMIT_TYPE_BY_PRODUCT` |
+| Limit type codes for Gold, IRS and Equity swaps (only `FX 01` is known) | `constants.LIMIT_TYPE_BY_PRODUCT` |
+| Which tenor lands in which of the 14 periods | `bucket_for` in `src/cdl/logic/tenor.py` |
+| Whether a trader needs to submit CALL, TDY or TOM - no tenor maps onto them today | `constants.UNREACHABLE_BUCKETS` |
 | Official currency -> Low/Normal/Medium/High lists | `constants.CURRENCY_CLASS_BY_CURRENCY` |
 | Pair -> classifying currency rule for non-USD pairs | `classifying_currency` in `logic/ffr.py` |
-| Tenor bucket boundaries, especially beyond 1 year | `bucket_for` in `logic/tenor.py` |
+| Whether the reserved / unreserved split needs showing; the tool uses unreserved figures | `build_surface` in `logic/availability.py` |
+| Local versus global limit; the tool uses the per-period (local) limits | `build_surface` in `logic/availability.py` |
 | CIRFMG interpretation beyond displaying the text | `constants.COL_AGREEMENT_TEXT` |
-| CKOVLMP key column (`CICPAC` is a placeholder) | `constants.COL_AGREEMENT_COUNTERPARTY` |
 
 When a rule is confirmed, edit the one function or constant and run `pytest`.
+
+---
+
+## 7a. Before you commit
+
+The repository must stay free of anything identifying: no employer name, endpoint URL,
+library or schema name, credential, real counterparty acronym or real limit value - in
+code, in comments, in commit messages and in log lines.
+
+Check each time:
+
+1. `git status` - `config.ini`, `dev_cache/`, `logs/`, `report.html` and
+   `prototype_report.txt` are gitignored and must not appear.
+2. `git diff --cached` before committing. Look for the endpoint URL, the library name
+   and any real counterparty acronym.
+3. `src/cdl/treats/api.py` and `prototype/check_limit.py` are **tracked** files with a
+   paste point in them. Once the company connector is in, keep them local:
+   `git update-index --skip-worktree src/cdl/treats/api.py prototype/check_limit.py`
+   (and `--no-skip-worktree` when you do want to commit an unrelated change to them).
+4. Real counterparties belong in `config.ini` (`probe_counterparty`) or on the command
+   line (`--cpty`), never in a source file. If you find yourself hardcoding a list of
+   acronyms to make a query work, that is a missing option - the tool builds every
+   `WHERE` from the request.
+5. Examples use `ABCD` and `ABCDEFG`; mock values are obviously synthetic.
 
 ---
 
@@ -201,7 +278,10 @@ When a rule is confirmed, edit the one function or constant and run `pytest`.
 
 | Symptom | Cause and fix |
 |---------|---------------|
-| `the company connector has not been pasted` | Paste it into `src/cdl/treats/api.py` (and the prototype). `doctor` reports this as FAIL whenever a table is set to `api`. |
+| `the company connector has not been pasted` | Paste it into `src/cdl/treats/api.py` (and the prototype), replacing the body **including the `raise NotImplementedError` line** - that line is the marker. `doctor` reports this as FAIL whenever a table is set to `api`. |
+| A value from `config.ini` is not accepted, or the endpoint rejects the library | You may have quoted it. `doctor` prints `[WARN] config values unquoted` with the keys; remove the quotes. An ini file has no quoting. |
+| `returned N rows, which is the configured endpoint cap` | The read was not narrow enough and may be incomplete, so the tool refused to decide on it. Use `--cpty`, set `[treats] probe_counterparty`, or raise `[treats] max_rows` if the endpoint's real cap is higher. |
+| A deal is rejected on a long tenor with availability zero | The counterparty has no limit in that period, or a shorter period is exhausted; the limits are cumulative. Read the period table in the output - `docs/HOW_IT_WORKS.md` §6 explains the ladder. |
 | `[treats] url is not set` / `library is not set` | Fill them in `config.ini`, or set `CDL_TREATS_URL` / `CDL_TREATS_LIBRARY`. |
 | Rows come back but columns look wrong | You are pointed at the wrong library. Check `extract` output: it prints `library.table` and the column list. |
 | `unknown tenor '...'` | Use a grid value or an alias; the message lists valid examples. The grid is the 89 FFR "Time Period" values. |

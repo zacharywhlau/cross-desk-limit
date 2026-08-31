@@ -89,7 +89,9 @@ def command_doctor(args: argparse.Namespace) -> int:
         pasted or not api_tables,
         "pasted" if pasted else (
             "NOT pasted - required because "
-            f"{', '.join(api_tables)} {'is' if len(api_tables) == 1 else 'are'} set to api"
+            f"{', '.join(api_tables)} {'is' if len(api_tables) == 1 else 'are'} set to api. "
+            "Replace the body of query_to_dataframe in src/cdl/treats/api.py, including "
+            "the raise NotImplementedError line (see the PASTE POINT banner in that file)"
             if api_tables else "not pasted, but no table is set to api"
         ),
     )

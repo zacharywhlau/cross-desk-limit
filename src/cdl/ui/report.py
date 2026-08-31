@@ -67,12 +67,16 @@ def text_report(
         lines.append("")
         lines.append(f"Breakdown - {surface.counterparty} {surface.product} "
                      f"(limit type {surface.limit_type})")
-        lines.append(f"  deal limit        : {numbers.millions(surface.deal_limit)}")
-        lines.append(f"  utilisation       : {numbers.millions(surface.utilisation)}")
-        lines.append(f"  active holds      : {numbers.millions(surface.holds_usage)}")
-        lines.append(f"  available before  : {numbers.millions(result.deal_available_before)}")
-        lines.append(f"  this request usage: {numbers.millions(result.usage)}")
-        lines.append(f"  available after   : {numbers.millions(result.deal_available_after)}")
+        lines.append(f"  total limit         : {numbers.millions(surface.deal_limit)}")
+        lines.append(f"  total cash risk     : {numbers.millions(surface.utilisation)}")
+        lines.append(f"  active holds        : {numbers.millions(surface.holds_usage)}")
+        lines.append(f"  total available     : {numbers.millions(result.deal_available_before)}")
+        lines.append(f"  this request usage  : {numbers.millions(result.usage)}")
+        lines.append(
+            f"  period {result.affected_bucket or '-':<13}: available before "
+            f"{numbers.millions(result.bucket_available_before)}, after "
+            f"{numbers.millions(result.bucket_available_after)}"
+        )
         lines.append("  time periods (the limit ladder: a deal consumes every shorter period):")
         lines.append(
             f"    {'period':<9} {'limit':>12} {'cash risk':>12} {'holds':>12} "
@@ -265,13 +269,16 @@ not a booking.</p>
   <dt>hold</dt><dd>{result.hold_id if result.hold_id is not None else "none"}</dd>
 </dl>
 
-<h2>Deal limit</h2>
+<h2>Limit</h2>
 <dl>
-  <dt>limit</dt><dd>{numbers.millions(surface.deal_limit) if surface else '-'}</dd>
-  <dt>utilisation</dt><dd>{numbers.millions(surface.utilisation) if surface else '-'}</dd>
+  <dt>total limit</dt><dd>{numbers.millions(surface.deal_limit) if surface else '-'}</dd>
+  <dt>total cash risk</dt><dd>{numbers.millions(surface.utilisation) if surface else '-'}</dd>
   <dt>active holds</dt><dd>{numbers.millions(surface.holds_usage) if surface else '-'}</dd>
-  <dt>available before</dt><dd>{numbers.millions(result.deal_available_before)}</dd>
-  <dt>available after</dt><dd>{numbers.millions(result.deal_available_after)}</dd>
+  <dt>total available</dt><dd>{numbers.millions(result.deal_available_before)}</dd>
+  <dt>period {html.escape(result.affected_bucket or '-')} available before</dt>
+      <dd>{numbers.millions(result.bucket_available_before)}</dd>
+  <dt>period {html.escape(result.affected_bucket or '-')} available after</dt>
+      <dd>{numbers.millions(result.bucket_available_after)}</dd>
 </dl>
 
 <h2>Time periods <span class="note">(the limit ladder: a deal consumes every shorter
