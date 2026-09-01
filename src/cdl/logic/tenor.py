@@ -60,29 +60,41 @@ def months_of(tenor: str) -> float:
     return count * 12.0
 
 
-def bucket_for(tenor: str) -> str:
-    """PROVISIONAL bucket map - one function, easy to edit.
+#: PROVISIONAL upper bound in months for each period of the ladder, in slot order.
+#: CALL, TDY and TOM carry no bound because no FFR tenor maps onto them; a deal never
+#: lands there, but their figures are still read and displayed.
+_BUCKET_UPPER_BOUND_MONTHS: tuple[tuple[str, float], ...] = (
+    ("SPT", 0.0),
+    ("SPT-1M", 1.0),
+    ("1M-3M", 3.0),
+    ("3M-6M", 6.0),
+    ("6M-1Y", 12.0),
+    ("1Y-3Y", 36.0),
+    ("3Y-5Y", 60.0),
+    ("5Y-7Y", 84.0),
+    ("7Y-10Y", 120.0),
+    ("10Y-15Y", 180.0),
+)
 
-    Spot, all weeks and 1 months -> Spot-1M; 2-3 months -> 1M-3M;
-    4-6 months -> 3M-6M; 7-12 months -> 6M-1Y; 13+ months and all years -> 1Y+.
+#: Anything longer than the last bound above.
+_LONGEST_BUCKET: str = "15Y+"
+
+
+def bucket_for(tenor: str) -> str:
+    """PROVISIONAL map from a tenor onto one of the 14 periods - one function to edit.
+
+    A deal falls in the first period whose upper bound covers its maturity: Spot -> SPT,
+    weeks and 1 months -> SPT-1M, 2-3 months -> 1M-3M, and so on up to 15Y+.
     """
-    label = normalise_tenor(tenor)
-    if label == "Spot" or label.endswith(("week", "weeks")) or label == "1 months":
-        return "Spot-1M"
-    if label.endswith("months"):
-        months = int(label.split(" ", 1)[0])
-        if months <= 3:
-            return "1M-3M"
-        if months <= 6:
-            return "3M-6M"
-        if months <= 12:
-            return "6M-1Y"
-        return "1Y+"
-    return "1Y+"
+    months = months_of(tenor)
+    for name, upper in _BUCKET_UPPER_BOUND_MONTHS:
+        if months <= upper:
+            return name
+    return _LONGEST_BUCKET
 
 
 def bucket_index(bucket: str) -> int:
-    """PROVISIONAL: the CFS0xx / CFSL0xx index that belongs to a bucket."""
+    """The CFSO / CFSL slot number (1..14) that belongs to a period."""
     try:
         return constants.BUCKET_INDEX[bucket]
     except KeyError as error:

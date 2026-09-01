@@ -28,13 +28,33 @@ def test_counterparty_master_uses_the_real_column_names(settings: Settings) -> N
 
 def test_limit_table_uses_the_real_column_names(settings: Settings) -> None:
     columns = columns_of(mock.fetch(constants.TABLE_LIMITS, settings))
+    assert columns[:3] == ["CFCPTY", "CFSLMT", "CFSLTT"]
     assert columns[:3] == [
         constants.COL_LIMIT_COUNTERPARTY,
         constants.COL_LIMIT_TYPE,
         constants.COL_LIMIT_AMOUNT,
     ]
-    assert f"{constants.COL_OCCUPIED_PREFIX}1" in columns
-    assert f"{constants.COL_BUCKET_LIMIT_PREFIX}1" in columns
+    # One occupied and one limit column per period, zero padded to two digits.
+    for slot in range(1, 15):
+        assert constants.occupied_column(slot) in columns
+        assert constants.slot_limit_column(slot) in columns
+    assert "CFSO01" in columns and "CFSO14" in columns
+    assert "CFSL01" in columns and "CFSL14" in columns
+
+
+def test_agreement_table_uses_the_real_column_names(settings: Settings) -> None:
+    columns = columns_of(mock.fetch(constants.TABLE_AGREEMENT, settings))
+    assert columns == ["CICPTY", "CIRFMG"]
+
+
+def test_limit_type_codes_are_written_as_the_desk_screen_shows_them(
+    settings: Settings
+) -> None:
+    codes = {
+        row[constants.COL_LIMIT_TYPE]
+        for row in mock.fetch(constants.TABLE_LIMITS, settings)
+    }
+    assert codes == {"FX 01", "GD 01", "IR 01", "EQ 01"}
 
 
 def test_ffr_grid_is_a_time_period_by_quarter_grid(settings: Settings) -> None:

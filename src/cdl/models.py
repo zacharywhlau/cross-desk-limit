@@ -40,16 +40,25 @@ class FfrLookup:
 
 @dataclass(frozen=True)
 class BucketSurface:
-    """One tenor bucket of one counterparty/product limit."""
+    """One time period of one counterparty/product limit.
+
+    `available` is the ladder result, not a plain subtraction: the limit system is
+    cumulative, so a period is limited by its own headroom AND by every shorter
+    period (see build_surface in logic/availability.py).
+    """
 
     bucket: str
+    slot: int
     limit: float
     occupied: float
     holds_usage: float
+    reverse_cumulative: float
+    available: float
 
     @property
-    def available(self) -> float:
-        return self.limit - self.occupied - self.holds_usage
+    def own_headroom(self) -> float:
+        """This period's own limit less the cash risk from here to the longest period."""
+        return self.limit - self.reverse_cumulative
 
 
 @dataclass(frozen=True)

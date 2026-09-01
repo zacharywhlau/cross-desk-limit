@@ -120,7 +120,11 @@ def _row_fetcher(
     column: str,
     settings: Settings,
 ) -> Callable[[str], list[Record]]:
-    """Fetch rows of one table for one acronym, remembering what was already read."""
+    """Fetch rows of one table for one acronym, remembering what was already read.
+
+    Every read is narrowed by a WHERE the tool builds, because the endpoint caps a
+    result set and reading a whole table would silently return partial data.
+    """
     seen: dict[str, list[Record]] = {}
 
     def fetch(acronym: str) -> list[Record]:
@@ -129,6 +133,30 @@ def _row_fetcher(
             where = sql_builder.equals_clause(column, key)
             seen[key] = source_module.fetch_table(table, settings, where=where).rows
         return seen[key]
+
+    return fetch
+
+
+def _chain_fetcher(
+    table: str,
+    column: str,
+    chain: Sequence[str],
+    settings: Settings,
+) -> Callable[[str], list[Record]]:
+    """One `IN (...)` read covering the whole chain, then served per acronym.
+
+    The submitted counterparty and its parents are known before the limit and
+    agreement tables are touched, so one round trip is enough for all of them.
+    """
+    rows: list[Record] | None = None
+
+    def fetch(acronym: str) -> list[Record]:
+        nonlocal rows
+        if rows is None:
+            where = sql_builder.in_clause(column, list(chain))
+            rows = source_module.fetch_table(table, settings, where=where).rows
+        key = constants.code_key(acronym)
+        return [row for row in rows if constants.code_key(row.get(column, "")) == key]
 
     return fetch
 
@@ -216,15 +244,15 @@ def run_check(
         usage = usage_for(request.product, request.notional_usd, ffr.weight)
 
         table = constants.TABLE_LIMITS
-        fetch_limits = _row_fetcher(
-            constants.TABLE_LIMITS, constants.COL_LIMIT_COUNTERPARTY, settings)
+        fetch_limits = _chain_fetcher(
+            constants.TABLE_LIMITS, constants.COL_LIMIT_COUNTERPARTY, chain, settings)
         limit_rows = fetch_limits(request.counterparty)
         # Fail here rather than inside the transaction if the row is missing.
         availability.build_surface(request.counterparty, request.product, limit_rows)
 
         table = constants.TABLE_AGREEMENT
-        fetch_agreement = _row_fetcher(
-            constants.TABLE_AGREEMENT, constants.COL_AGREEMENT_COUNTERPARTY, settings)
+        fetch_agreement = _chain_fetcher(
+            constants.TABLE_AGREEMENT, constants.COL_AGREEMENT_COUNTERPARTY, chain, settings)
 
         parent = chain[1] if len(chain) > 1 else None
         notes: list[str] = []

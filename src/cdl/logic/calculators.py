@@ -72,5 +72,5 @@ def usage_for(product: str, notional_usd: float, ffr_weight: float) -> float:
 
 
 def limit_type_for(product: str) -> str:
-    """CFSLTT code for a product. PROVISIONAL for everything except FX01."""
+    """CFSLMT code for a product. PROVISIONAL for everything except "FX 01"."""
     return constants.LIMIT_TYPE_BY_PRODUCT[normalise_product(product)]

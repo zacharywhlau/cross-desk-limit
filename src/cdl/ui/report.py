@@ -67,21 +67,28 @@ def text_report(
         lines.append("")
         lines.append(f"Breakdown - {surface.counterparty} {surface.product} "
                      f"(limit type {surface.limit_type})")
-        lines.append(f"  deal limit        : {numbers.millions(surface.deal_limit)}")
-        lines.append(f"  utilisation       : {numbers.millions(surface.utilisation)}")
-        lines.append(f"  active holds      : {numbers.millions(surface.holds_usage)}")
-        lines.append(f"  available before  : {numbers.millions(result.deal_available_before)}")
-        lines.append(f"  this request usage: {numbers.millions(result.usage)}")
-        lines.append(f"  available after   : {numbers.millions(result.deal_available_after)}")
-        lines.append("  buckets:")
-        header = f"    {'bucket':<8} {'limit':>12} {'occupied':>12} {'holds':>12} {'available':>12}"
-        lines.append(header)
+        lines.append(f"  total limit         : {numbers.millions(surface.deal_limit)}")
+        lines.append(f"  total cash risk     : {numbers.millions(surface.utilisation)}")
+        lines.append(f"  active holds        : {numbers.millions(surface.holds_usage)}")
+        lines.append(f"  total available     : {numbers.millions(result.deal_available_before)}")
+        lines.append(f"  this request usage  : {numbers.millions(result.usage)}")
+        lines.append(
+            f"  period {result.affected_bucket or '-':<13}: available before "
+            f"{numbers.millions(result.bucket_available_before)}, after "
+            f"{numbers.millions(result.bucket_available_after)}"
+        )
+        lines.append("  time periods (the limit ladder: a deal consumes every shorter period):")
+        lines.append(
+            f"    {'period':<9} {'limit':>12} {'cash risk':>12} {'holds':>12} "
+            f"{'risk >= here':>13} {'available':>12}"
+        )
         for bucket in surface.buckets:
             marker = " <- this deal" if bucket.bucket == result.affected_bucket else ""
             lines.append(
-                f"    {bucket.bucket:<8} {numbers.millions(bucket.limit):>12} "
+                f"    {bucket.bucket:<9} {numbers.millions(bucket.limit):>12} "
                 f"{numbers.millions(bucket.occupied):>12} "
                 f"{numbers.millions(bucket.holds_usage):>12} "
+                f"{numbers.millions(bucket.reverse_cumulative):>13} "
                 f"{numbers.millions(bucket.available):>12}{marker}"
             )
 
@@ -158,6 +165,7 @@ def html_report(
                 numbers.millions(bucket.limit),
                 numbers.millions(bucket.occupied),
                 numbers.millions(bucket.holds_usage),
+                numbers.millions(bucket.reverse_cumulative),
                 numbers.millions(bucket.available),
             )
             for bucket in (surface.buckets if surface else ())
@@ -261,18 +269,23 @@ not a booking.</p>
   <dt>hold</dt><dd>{result.hold_id if result.hold_id is not None else "none"}</dd>
 </dl>
 
-<h2>Deal limit</h2>
+<h2>Limit</h2>
 <dl>
-  <dt>limit</dt><dd>{numbers.millions(surface.deal_limit) if surface else '-'}</dd>
-  <dt>utilisation</dt><dd>{numbers.millions(surface.utilisation) if surface else '-'}</dd>
+  <dt>total limit</dt><dd>{numbers.millions(surface.deal_limit) if surface else '-'}</dd>
+  <dt>total cash risk</dt><dd>{numbers.millions(surface.utilisation) if surface else '-'}</dd>
   <dt>active holds</dt><dd>{numbers.millions(surface.holds_usage) if surface else '-'}</dd>
-  <dt>available before</dt><dd>{numbers.millions(result.deal_available_before)}</dd>
-  <dt>available after</dt><dd>{numbers.millions(result.deal_available_after)}</dd>
+  <dt>total available</dt><dd>{numbers.millions(result.deal_available_before)}</dd>
+  <dt>period {html.escape(result.affected_bucket or '-')} available before</dt>
+      <dd>{numbers.millions(result.bucket_available_before)}</dd>
+  <dt>period {html.escape(result.affected_bucket or '-')} available after</dt>
+      <dd>{numbers.millions(result.bucket_available_after)}</dd>
 </dl>
 
-<h2>Tenor buckets</h2>
+<h2>Time periods <span class="note">(the limit ladder: a deal consumes every shorter
+period, so available is the running minimum)</span></h2>
 <table>
-<tr><th>bucket</th><th>limit</th><th>occupied</th><th>holds</th><th>available</th></tr>
+<tr><th>period</th><th>limit</th><th>cash risk</th><th>holds</th>
+<th>risk from here on</th><th>available</th></tr>
 {bucket_rows}
 </table>
 
