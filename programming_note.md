@@ -496,3 +496,44 @@ git log --oneline -5
 
 One commit per logical change (one per milestone here), and the requirements
 documents in the very first commit so no context is lost if a session ends.
+
+## 16. Cloud Agent development environment
+
+The repo runs on the Cursor Cloud Agent default image (Ubuntu 24.04, Python
+3.12). Setup lives in `.cursor/`:
+
+- `.cursor/environment.json` - `{"name": ..., "install": "bash .cursor/install.sh"}`.
+  A committed `environment.json` is repo-file managed and takes precedence over any
+  dashboard/DB config, so the environment follows the branch.
+- `.cursor/install.sh` - idempotent bootstrap:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends python3-tk python3-venv
+python3 -m venv --system-site-packages .venv     # only if .venv is absent
+.venv/bin/python -m pip install -r requirements.txt "pytest>=8.0"
+```
+
+Two things that are easy to get wrong:
+
+- **tkinter is a system package, not a wheel.** `pip install tkinter` does not
+  exist. Install `python3-tk` with apt, then create the venv with
+  `--system-site-packages` so the apt-provided `tkinter` is importable inside
+  `.venv`. Without that flag the window raises `ModuleNotFoundError: tkinter`.
+- **The GUI needs an X display.** In the cloud VM one already runs at
+  `DISPLAY=:1`; locally use `xvfb-run` (see section 15). `python -m cdl.ui.app`
+  reads `DISPLAY`; `build_window` raises `tkinter.TclError` when none is present,
+  which `test_ui.py` turns into a `skip`.
+
+### 16.1 Gotcha: the agent artifacts directory is a slow FUSE mount
+
+`/opt/cursor/artifacts` is backed by a FUSE agent-store, not local disk. A single
+`cp` there can take ~10 s, and a process that writes *incrementally* to a file on
+that mount (e.g. `pytest > /opt/cursor/artifacts/run.log`, which flushes progress
+dots) can stall for a long time. Always write logs to local disk first and copy
+the finished file once:
+
+```bash
+python3 -m pytest > /tmp/run.log 2>&1        # fast: local tmpfs
+cp /tmp/run.log /opt/cursor/artifacts/       # one write to the slow mount
+```
